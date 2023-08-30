@@ -3,11 +3,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 enum TokenType {
-    NUM, ID, VAR, FUNCTION, K_FN, OP_ADD, OP_MUL, OP_LP, OP_RP, OP_EQ, OP_FN, UNKNOWN
+    NUM, ID, FUNCTION, K_FN, OP_ADD, OP_MUL, OP_LP, OP_RP, OP_EQ, OP_FN, UNKNOWN
 }
 
 enum ParseNodeType {
-    ASSIGNMENT, FACTOR, FN_CALL, IDS, ADD, VAR, VALUE, NUM, EXPR, OP, FUNCTION_NAME, MULT
+    ASSIGNMENT, FN_CALL, ADD, MULT, VAR, NUM, OP, PARENTHESIZED, FUNCTION_NAME
 }
 
 record Token(String value, TokenType type) { }
@@ -22,7 +22,7 @@ interface TokenStream {
     List<Token> peekRest();
 
     default Token take(TokenType type) {
-        if (peek().type() != type) throw new Error("Error: expected token " + type + " but got " + peek().type());
+        if (peek().type() != type) throw new RuntimeException("Error: expected token " + type + " but got " + peek().type());
         return take();
     }
 
@@ -31,7 +31,7 @@ interface TokenStream {
     }
 
     default void skip(TokenType type) {
-        if (peek().type() != type) throw new Error("Error: expected token " + type + " but got " + peek().type());
+        if (peek().type() != type) throw new RuntimeException("Error: expected token " + type + " but got " + peek().type());
         skip();
     }
 }
@@ -102,24 +102,24 @@ abstract class TokenStreamView implements TokenStream {
     }
 }
 
-class ParseTree implements Iterable<ParseTree> {
+class ParseTreeNode implements Iterable<ParseTreeNode> {
     private final ParseNodeType type;
-    private final ParseTree[] children;
+    private final ParseTreeNode[] children;
     private final Token value;
 
-    public ParseTree(ParseNodeType type, Token value) {
+    public ParseTreeNode(ParseNodeType type, Token value) {
         this.type = type;
         children = null;
         this.value = value;
     }
 
-    public ParseTree(ParseNodeType type, ParseTree... children) {
+    public ParseTreeNode(ParseNodeType type, ParseTreeNode... children) {
         this.type = type;
         this.children = children;
         this.value = null;
     }
 
-    public ParseTree[] children() {
+    public ParseTreeNode[] children() {
         if (isLeaf()) throw new Error("Cannot access children of leaf node");
         return children;
     }
@@ -129,7 +129,7 @@ class ParseTree implements Iterable<ParseTree> {
         return value;
     }
 
-    public Iterator<ParseTree> iterator() {
+    public Iterator<ParseTreeNode> iterator() {
         return children == null ? Collections.emptyIterator() : Arrays.asList(children).iterator();
     }
 
@@ -144,11 +144,11 @@ class ParseTree implements Iterable<ParseTree> {
     public String toString() {
         if (children == null) return value.toString();
         if (children.length == 0) return type + " []";
-        return type + " [" + (Arrays.stream(children).map(ParseTree::toString).reduce("", (a, b) -> a + "\n" + b)).replace("\n", "\n    ") + "\n]";
+        return type + " [" + (Arrays.stream(children).map(ParseTreeNode::toString).reduce("", (a, b) -> a + "\n" + b)).replace("\n", "\n    ") + "\n]";
     }
 }
 
-record Function(ParseTree eval, String[] args, int argLength) {
+record Function(ParseTreeNode body, String[] args, int argLength) {
 }
 
 public class Interpreter {
@@ -156,143 +156,205 @@ public class Interpreter {
     private final Map<String, Function> functions = new HashMap<>();
 
     private class Parser {
-        private void parseFunction(TokenStream tokens) {
+        private void parseFunction(TokenStream tokens) throws Exception {
             tokens.skip(TokenType.K_FN);
             // This is a function declaration
             String name = tokens.take(TokenType.ID).value();
             List<String> argNames = new ArrayList<>();
-            while (tokens.peek().type() == TokenType.ID) {
-                argNames.add(tokens.take().value());
-            }
+            do {
+                argNames.add(tokens.take(TokenType.ID).value());
+            } while (tokens.peek().type() == TokenType.ID);
             tokens.skip(TokenType.OP_FN);
-            ParseTree expr = parseExpr(tokens);
+            ParseTreeNode expr = parseExpr(tokens);
 
             System.out.println("Parsed: FN " + name + "(" + argNames + ") => " + expr);
 
             functions.put(name, new Function(expr, argNames.toArray(String[]::new), argNames.size()));
         }
 
-        private ParseTree parseExpr(TokenStream tokens) {
+        private ParseTreeNode parseExpr(TokenStream tokens) throws Exception {
             return parseAssignExpr(tokens);
         }
 
-        private ParseTree parseAssignExpr(TokenStream tokens) {
-            if (tokens.peek().type() == TokenType.VAR) {
-                Token var = tokens.take();
+        private ParseTreeNode parseAssignExpr(TokenStream tokens) throws Exception {
+            ParseTreeNode lhs = parseAddExpr(tokens);
+            if(tokens.peek().type() == TokenType.OP_EQ) {
                 tokens.skip(TokenType.OP_EQ);
-                ParseTree value = parseExpr(tokens);
-                return new ParseTree(ParseNodeType.ASSIGNMENT, new ParseTree(ParseNodeType.VAR, var), new ParseTree(ParseNodeType.VALUE, value));
-            } else return parseAddExpr(tokens);
+                ParseTreeNode value = parseExpr(tokens);
+                return new ParseTreeNode(ParseNodeType.ASSIGNMENT, lhs, value);
+            }
+            else return lhs;
         }
 
-        private ParseTree parseAddExpr(TokenStream tokens) {
-            ParseTree factor1 = parseMultExpr(tokens);
+        private ParseTreeNode parseAddExpr(TokenStream tokens) throws Exception {
+            ParseTreeNode factor1 = parseMultExpr(tokens);
 //        System.out.println("factor: " + factor1);
 //        System.out.println("next: " + tokens.peek());
             Token next = tokens.peek();
             TokenType t = next.type();
             if (t == TokenType.OP_ADD) {
                 tokens.skip(TokenType.OP_ADD);
-                ParseTree factor2 = parseAddExpr(tokens);
+                ParseTreeNode factor2 = parseAddExpr(tokens);
                 if (factor2.getType() == ParseNodeType.ADD) {
                     // We have to manually restructure the tree for left associativity
-                    return new ParseTree(ParseNodeType.ADD,
-                            new ParseTree(ParseNodeType.ADD,
+                    return new ParseTreeNode(ParseNodeType.ADD,
+                            new ParseTreeNode(ParseNodeType.ADD,
                                     factor1,
-                                    new ParseTree(ParseNodeType.OP, next),
+                                    new ParseTreeNode(ParseNodeType.OP, next),
                                     factor2.children()[0]
                             ),
-                            new ParseTree(ParseNodeType.OP, factor2.children()[1]),
+                            new ParseTreeNode(ParseNodeType.OP, factor2.children()[1].value()),
                             factor2.children()[2]
                     );
-                } else return new ParseTree(ParseNodeType.ADD,
+                } else return new ParseTreeNode(ParseNodeType.ADD,
                         factor1,
-                        new ParseTree(ParseNodeType.OP, next),
+                        new ParseTreeNode(ParseNodeType.OP, next),
                         factor2
                 );
             } else return factor1;
         }
 
-        private ParseTree parseMultExpr(TokenStream tokens) {
-            ParseTree factor1 = parseFactor(tokens);
+        private ParseTreeNode parseMultExpr(TokenStream tokens) throws Exception {
+            ParseTreeNode factor1 = parseFactor(tokens);
 //        System.out.println("factor: " + factor1);
 //        System.out.println("next: " + tokens.peek());
             Token next = tokens.peek();
             TokenType t = next.type();
             if (t == TokenType.OP_MUL) {
                 tokens.skip(TokenType.OP_MUL);
-                ParseTree factor2 = parseMultExpr(tokens);
+                ParseTreeNode factor2 = parseMultExpr(tokens);
                 if (factor2.getType() == ParseNodeType.MULT) {
                     // We have to manually restructure the tree for left associativity
-                    return new ParseTree(ParseNodeType.MULT,
-                            new ParseTree(ParseNodeType.MULT,
+                    return new ParseTreeNode(ParseNodeType.MULT,
+                            new ParseTreeNode(ParseNodeType.MULT,
                                     factor1,
-                                    new ParseTree(ParseNodeType.OP, next),
+                                    new ParseTreeNode(ParseNodeType.OP, next),
                                     factor2.children()[0]
                             ),
-                            new ParseTree(ParseNodeType.OP, factor2.children()[1]),
+                            new ParseTreeNode(ParseNodeType.OP, factor2.children()[1].value()),
                             factor2.children()[2]
                     );
-                } else return new ParseTree(ParseNodeType.MULT,
+                } else return new ParseTreeNode(ParseNodeType.MULT,
                         factor1,
-                        new ParseTree(ParseNodeType.OP, next),
+                        new ParseTreeNode(ParseNodeType.OP, next),
                         factor2
                 );
             } else return factor1;
         }
 
-        private ParseTree parseFactor(TokenStream tokens) {
+        private ParseTreeNode parseFactor(TokenStream tokens) throws Exception {
             var tk = tokens.take();
             return switch (tk.type()) {
-                case NUM -> new ParseTree(ParseNodeType.NUM, tk);
-                case VAR, ID -> new ParseTree(ParseNodeType.VAR, tk);
+                case NUM -> new ParseTreeNode(ParseNodeType.NUM, tk);
+                case ID -> new ParseTreeNode(ParseNodeType.VAR, tk);
                 case OP_LP -> {
-                    ParseTree inner = parseExpr(tokens);
+                    ParseTreeNode inner = parseExpr(tokens);
                     tokens.skip(TokenType.OP_RP);
-                    yield inner;
+                    yield new ParseTreeNode(ParseNodeType.PARENTHESIZED, inner);
                 }
                 case FUNCTION -> {
                     int numParams = functions.get(tk.value()).argLength();
-                    ParseTree[] children = new ParseTree[numParams + 1];
-                    children[0] = new ParseTree(ParseNodeType.FUNCTION_NAME, tk);
+                    ParseTreeNode[] children = new ParseTreeNode[numParams + 1];
+                    children[0] = new ParseTreeNode(ParseNodeType.FUNCTION_NAME, tk);
                     for(int i = 1; i <= numParams; i++) children[i] = parseExpr(tokens);
-                    yield new ParseTree(ParseNodeType.FN_CALL, children);
+                    yield new ParseTreeNode(ParseNodeType.FN_CALL, children);
                 }
-                default -> throw new IllegalStateException("Unexpected value: " + tk.type());
+                default -> throw new Exception("Unexpected value: " + tk.type());
             };
         }
     }
     private final Parser parser = new Parser();
 
-    private double interpretExpr() {
+    private double eval(ParseTreeNode node) throws Exception {
+        switch (node.getType()) {
+            case ASSIGNMENT -> {
+                double ev = eval(node.children()[1]);
+                variables.put(node.children()[0].value().value(), ev);
+                return ev;
+            }
+            case FN_CALL -> {
+                String funcName = node.children()[0].value().value();
+                Function func = functions.get(funcName);
+
+                double[] argValues = new double[func.argLength()];
+                for(int i = 0; i < func.argLength(); i++) argValues[i] = eval(node.children()[i + 1]);
+
+                String[] argNames = func.args();
+                // Save old arg values
+                Map<String, Double> old = new HashMap<>();
+                for(String i : argNames) old.put(i, variables.get(i));
+
+                for(int i = 0; i < func.argLength(); i++) {
+                    variables.put(argNames[i], argValues[i]);
+                }
+
+                double result = eval(func.body());
+
+                variables.putAll(old);
+                for(String i : argNames) if(!old.containsKey(i)) variables.remove(i);
+
+                return result;
+            }
+            case ADD, MULT -> {
+                double lhs = eval(node.children()[0]);
+                double rhs = eval(node.children()[2]);
+                String op = node.children()[1].value().value();
+                return switch (op) {
+                    case "+" -> lhs + rhs;
+                    case "-" -> lhs - rhs;
+                    case "*" -> lhs * rhs;
+                    case "/" -> lhs / rhs;
+                    case "%" -> lhs % rhs;
+                    default -> throw new Exception("Invalid binary operator: " + op);
+                };
+            }
+            case PARENTHESIZED -> {
+                return eval(node.children()[0]);
+            }
+            case VAR -> {
+                return variables.get(node.value().value());
+            }
+            case NUM -> {
+                return Double.parseDouble(node.value().value());
+            }
+            case OP, FUNCTION_NAME -> throw new IllegalStateException("Cannot evaluate parse node of type " + node.getType());
+        }
         return 0.0;
     }
 
     public Double input(String input) {
+        System.out.println("Input: " + input);
+
         TokenStream tokens = new TokenStreamView(tokenize(input)) {
             @Override
             public Token view(Token tk) {
                 if (tk.type() != TokenType.ID) return tk;
                 String id = tk.value();
                 if (functions.containsKey(id)) return new Token(id, TokenType.FUNCTION);
-                if (variables.containsKey(id)) return new Token(id, TokenType.VAR);
+                if (variables.containsKey(id)) return new Token(id, TokenType.ID);
                 return tk;
             }
         };
 
-        System.out.println("Input:" + tokens);
-
         if (tokens.peek().type() == TokenType.K_FN) {
-            parser.parseFunction(tokens);
-            return 0.;
+            try {
+                parser.parseFunction(tokens);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+            return null;
         }
 
-        ParseTree expr = parser.parseExpr(tokens);
+        try {
+            ParseTreeNode expr = parser.parseExpr(tokens);
 
-        System.out.println("Parsed: " + expr);
-        System.out.println("Remaining tokens: " + tokens);
+            if(!tokens.isExhausted()) throw new RuntimeException(new Exception("Expected EOF, instead got " + tokens));
 
-        return 0.;
+            System.out.println("Parsed: " + expr);
+            return eval(expr);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private static TokenStream tokenize(String input) {
