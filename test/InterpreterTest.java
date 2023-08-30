@@ -4,23 +4,32 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
 public class InterpreterTest {
-    @Test
-    public void basicTests() {
-        Interpreter interpreter = new Interpreter();
+    Interpreter interpreter = new Interpreter();
 
-        // Basic arithmetic
+    @Test
+    public void arithmeticTest() {
         assertEquals(2, interpreter.input("1 + 1"), 0.0);
         assertEquals(1, interpreter.input("2 - 1"), 0.0);
         assertEquals(6, interpreter.input("2 * 3"), 0.0);
         assertEquals(2, interpreter.input("8 / 4"), 0.0);
-        assertEquals(3, interpreter.input("7 % 4"), 0.0) ;
+        assertEquals(3, interpreter.input("7 % 4"), 0.0);
+    }
 
-
-        // Variables
+    @Test
+    public void variablesTest() {
         assertEquals(1, interpreter.input("x = 1"), 0.0);
         assertEquals(1, interpreter.input("x"), 0.0);
         assertEquals(4, interpreter.input("x + 3"), 0.0);
         assertFail("input: 'y'", () -> interpreter.input("y"));
+    }
+
+    @Test
+    public void functionTest() {
+        assertEquals(0, interpreter.input("fn pair x y => (x + y) * (x + y + 1) / 2 + y"), 0.0);
+        assertEquals(50, interpreter.input("pair 4 5"), 0.0);
+        assertEquals(42, interpreter.input("pair 2 6"), 0.0);
+        assertEquals(97, interpreter.input("pair pair 2 1 6"), 0.0);
+        assertEquals(700, interpreter.input("pair 2 pair 1 6"), 0.0);
     }
 
     private static void assertFail(String msg, Runnable runnable) {
