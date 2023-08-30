@@ -7,7 +7,7 @@ enum TokenType {
 }
 
 enum ParseNodeType {
-    ASSIGNMENT, FACTOR, FN_CALL, IDS, ADD, VAR, VALUE, MULT
+    ASSIGNMENT, FACTOR, FN_CALL, IDS, ADD, VAR, VALUE, NUM, EXPR, OP, MULT
 }
 
 record Token(String value, TokenType type) {
@@ -152,13 +152,73 @@ public class Interpreter {
             tokens.skip(TokenType.OP_EQ);
             ParseTree value = parseExpr(tokens);
             return new ParseTree(ParseNodeType.ASSIGNMENT, new ParseTree(ParseNodeType.VAR, var), new ParseTree(ParseNodeType.VALUE, value));
-        } else return parseAddExpr();
+        } else return parseAddExpr(tokens);
     }
 
-    private ParseTree parseAddExpr() {
-        return null;
+    private ParseTree parseAddExpr(TokenStream tokens) {
+        ParseTree factor1 = parseMultExpr(tokens);
+        Token next = tokens.peek();
+        TokenType t = next.type();
+        if(t == TokenType.OP_ADD) {
+            tokens.skip(TokenType.OP_ADD);
+            ParseTree factor2 = parseAddExpr(tokens);
+            if(factor2.getType() == ParseNodeType.ADD) {
+                // We have to manually restructure the tree for left associativity
+                return new ParseTree(ParseNodeType.ADD,
+                        new ParseTree(ParseNodeType.ADD,
+                                factor1,
+                                new ParseTree(ParseNodeType.OP, next),
+                                factor2.children()[0]
+                        ),
+                        new ParseTree(ParseNodeType.OP, factor2.children()[1]),
+                        factor2.children()[2]
+                );
+            }
+            else return new ParseTree(ParseNodeType.ADD, factor1, factor2);
+        }
+        else return factor1;
     }
 
+    private ParseTree parseMultExpr(TokenStream tokens) {
+        ParseTree factor1 = parseFactor(tokens);
+        Token next = tokens.peek();
+        TokenType t = next.type();
+        if(t == TokenType.OP_MUL) {
+            tokens.skip(TokenType.OP_MUL);
+            ParseTree factor2 = parseMultExpr(tokens);
+            if(factor2.getType() == ParseNodeType.MULT) {
+                // We have to manually restructure the tree for left associativity
+                return new ParseTree(ParseNodeType.MULT,
+                    new ParseTree(ParseNodeType.MULT,
+                        factor1,
+                        new ParseTree(ParseNodeType.OP, next),
+                        factor2.children()[0]
+                    ),
+                    new ParseTree(ParseNodeType.OP, factor2.children()[1]),
+                    factor2.children()[2]
+                );
+            }
+            else {
+                return new ParseTree(ParseNodeType.MULT, factor1, factor2);
+            }
+        }
+        else return factor1;
+    }
+
+    private ParseTree parseFactor(TokenStream tokens) {
+        var tk = tokens.peek();
+        return switch (tk.type()) {
+            case NUM -> new ParseTree(ParseNodeType.NUM, tk);
+            case VAR -> new ParseTree(ParseNodeType.VAR, tk);
+            case OP_LP -> {
+                tokens.skip(TokenType.OP_LP);
+                ParseTree inner = parseExpr(tokens);
+                tokens.skip(TokenType.OP_RP);
+                yield inner;
+            }
+            default -> throw new IllegalStateException("Unexpected value: " + tk.type());
+        };
+    }
 
     public Double input(String input) {
         TokenStream tokens = new TokenStreamView(tokenize(input)) {
