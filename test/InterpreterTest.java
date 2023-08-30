@@ -1,7 +1,9 @@
+import org.junit.Test;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
-public class Tester {
+public class InterpreterTest {
     @Test
     public void basicTests() {
         Interpreter interpreter = new Interpreter();
@@ -25,8 +27,6 @@ public class Tester {
         try {
             runnable.run();
             fail(msg);
-        } catch (Exception e) {
-            // Ok
-        }
+        } catch (Exception ignored) {}
     }
 }
