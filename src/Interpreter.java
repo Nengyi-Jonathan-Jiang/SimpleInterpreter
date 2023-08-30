@@ -155,110 +155,117 @@ public class Interpreter {
     private final Map<String, Double> variables = new HashMap<>();
     private final Map<String, Function> functions = new HashMap<>();
 
-    private void parseFunction(TokenStream tokens) {
-        tokens.skip(TokenType.K_FN);
-        // This is a function declaration
-        String name = tokens.take(TokenType.ID).value();
-        List<String> argNames = new ArrayList<>();
-        while (tokens.peek().type() == TokenType.ID) {
-            argNames.add(tokens.take().value());
+    private class Parser {
+        private void parseFunction(TokenStream tokens) {
+            tokens.skip(TokenType.K_FN);
+            // This is a function declaration
+            String name = tokens.take(TokenType.ID).value();
+            List<String> argNames = new ArrayList<>();
+            while (tokens.peek().type() == TokenType.ID) {
+                argNames.add(tokens.take().value());
+            }
+            tokens.skip(TokenType.OP_FN);
+            ParseTree expr = parseExpr(tokens);
+
+            System.out.println("Parsed: FN " + name + "(" + argNames + ") => " + expr);
+
+            functions.put(name, new Function(expr, argNames.toArray(String[]::new), argNames.size()));
         }
-        tokens.skip(TokenType.OP_FN);
-        ParseTree expr = parseExpr(tokens);
 
-        System.out.println("Parsed: FN " + name + "(" + argNames + ") => " + expr);
+        private ParseTree parseExpr(TokenStream tokens) {
+            return parseAssignExpr(tokens);
+        }
 
-        functions.put(name, new Function(expr, argNames.toArray(String[]::new), argNames.size()));
-    }
+        private ParseTree parseAssignExpr(TokenStream tokens) {
+            if (tokens.peek().type() == TokenType.VAR) {
+                Token var = tokens.take();
+                tokens.skip(TokenType.OP_EQ);
+                ParseTree value = parseExpr(tokens);
+                return new ParseTree(ParseNodeType.ASSIGNMENT, new ParseTree(ParseNodeType.VAR, var), new ParseTree(ParseNodeType.VALUE, value));
+            } else return parseAddExpr(tokens);
+        }
 
-    private ParseTree parseExpr(TokenStream tokens) {
-        return parseAssignExpr(tokens);
-    }
-
-    private ParseTree parseAssignExpr(TokenStream tokens) {
-        if (tokens.peek().type() == TokenType.VAR) {
-            Token var = tokens.take();
-            tokens.skip(TokenType.OP_EQ);
-            ParseTree value = parseExpr(tokens);
-            return new ParseTree(ParseNodeType.ASSIGNMENT, new ParseTree(ParseNodeType.VAR, var), new ParseTree(ParseNodeType.VALUE, value));
-        } else return parseAddExpr(tokens);
-    }
-
-    private ParseTree parseAddExpr(TokenStream tokens) {
-        ParseTree factor1 = parseMultExpr(tokens);
+        private ParseTree parseAddExpr(TokenStream tokens) {
+            ParseTree factor1 = parseMultExpr(tokens);
 //        System.out.println("factor: " + factor1);
 //        System.out.println("next: " + tokens.peek());
-        Token next = tokens.peek();
-        TokenType t = next.type();
-        if (t == TokenType.OP_ADD) {
-            tokens.skip(TokenType.OP_ADD);
-            ParseTree factor2 = parseAddExpr(tokens);
-            if (factor2.getType() == ParseNodeType.ADD) {
-                // We have to manually restructure the tree for left associativity
-                return new ParseTree(ParseNodeType.ADD,
-                        new ParseTree(ParseNodeType.ADD,
-                                factor1,
-                                new ParseTree(ParseNodeType.OP, next),
-                                factor2.children()[0]
-                        ),
-                        new ParseTree(ParseNodeType.OP, factor2.children()[1]),
-                        factor2.children()[2]
+            Token next = tokens.peek();
+            TokenType t = next.type();
+            if (t == TokenType.OP_ADD) {
+                tokens.skip(TokenType.OP_ADD);
+                ParseTree factor2 = parseAddExpr(tokens);
+                if (factor2.getType() == ParseNodeType.ADD) {
+                    // We have to manually restructure the tree for left associativity
+                    return new ParseTree(ParseNodeType.ADD,
+                            new ParseTree(ParseNodeType.ADD,
+                                    factor1,
+                                    new ParseTree(ParseNodeType.OP, next),
+                                    factor2.children()[0]
+                            ),
+                            new ParseTree(ParseNodeType.OP, factor2.children()[1]),
+                            factor2.children()[2]
+                    );
+                } else return new ParseTree(ParseNodeType.ADD,
+                        factor1,
+                        new ParseTree(ParseNodeType.OP, next),
+                        factor2
                 );
-            } else return new ParseTree(ParseNodeType.ADD,
-                    factor1,
-                    new ParseTree(ParseNodeType.OP, next),
-                    factor2
-            );
-        } else return factor1;
-    }
+            } else return factor1;
+        }
 
-    private ParseTree parseMultExpr(TokenStream tokens) {
-        ParseTree factor1 = parseFactor(tokens);
+        private ParseTree parseMultExpr(TokenStream tokens) {
+            ParseTree factor1 = parseFactor(tokens);
 //        System.out.println("factor: " + factor1);
 //        System.out.println("next: " + tokens.peek());
-        Token next = tokens.peek();
-        TokenType t = next.type();
-        if (t == TokenType.OP_MUL) {
-            tokens.skip(TokenType.OP_MUL);
-            ParseTree factor2 = parseMultExpr(tokens);
-            if (factor2.getType() == ParseNodeType.MULT) {
-                // We have to manually restructure the tree for left associativity
-                return new ParseTree(ParseNodeType.MULT,
-                        new ParseTree(ParseNodeType.MULT,
-                                factor1,
-                                new ParseTree(ParseNodeType.OP, next),
-                                factor2.children()[0]
-                        ),
-                        new ParseTree(ParseNodeType.OP, factor2.children()[1]),
-                        factor2.children()[2]
+            Token next = tokens.peek();
+            TokenType t = next.type();
+            if (t == TokenType.OP_MUL) {
+                tokens.skip(TokenType.OP_MUL);
+                ParseTree factor2 = parseMultExpr(tokens);
+                if (factor2.getType() == ParseNodeType.MULT) {
+                    // We have to manually restructure the tree for left associativity
+                    return new ParseTree(ParseNodeType.MULT,
+                            new ParseTree(ParseNodeType.MULT,
+                                    factor1,
+                                    new ParseTree(ParseNodeType.OP, next),
+                                    factor2.children()[0]
+                            ),
+                            new ParseTree(ParseNodeType.OP, factor2.children()[1]),
+                            factor2.children()[2]
+                    );
+                } else return new ParseTree(ParseNodeType.MULT,
+                        factor1,
+                        new ParseTree(ParseNodeType.OP, next),
+                        factor2
                 );
-            } else return new ParseTree(ParseNodeType.MULT,
-                    factor1,
-                    new ParseTree(ParseNodeType.OP, next),
-                    factor2
-            );
-        } else return factor1;
-    }
+            } else return factor1;
+        }
 
-    private ParseTree parseFactor(TokenStream tokens) {
-        var tk = tokens.take();
-        return switch (tk.type()) {
-            case NUM -> new ParseTree(ParseNodeType.NUM, tk);
-            case VAR, ID -> new ParseTree(ParseNodeType.VAR, tk);
-            case OP_LP -> {
-                ParseTree inner = parseExpr(tokens);
-                tokens.skip(TokenType.OP_RP);
-                yield inner;
-            }
-            case FUNCTION -> {
-                int numParams = functions.get(tk.value()).argLength();
-                ParseTree[] children = new ParseTree[numParams + 1];
-                children[0] = new ParseTree(ParseNodeType.FUNCTION_NAME, tk);
-                for(int i = 1; i <= numParams; i++) children[i] = parseExpr(tokens);
-                yield new ParseTree(ParseNodeType.FN_CALL, children);
-            }
-            default -> throw new IllegalStateException("Unexpected value: " + tk.type());
-        };
+        private ParseTree parseFactor(TokenStream tokens) {
+            var tk = tokens.take();
+            return switch (tk.type()) {
+                case NUM -> new ParseTree(ParseNodeType.NUM, tk);
+                case VAR, ID -> new ParseTree(ParseNodeType.VAR, tk);
+                case OP_LP -> {
+                    ParseTree inner = parseExpr(tokens);
+                    tokens.skip(TokenType.OP_RP);
+                    yield inner;
+                }
+                case FUNCTION -> {
+                    int numParams = functions.get(tk.value()).argLength();
+                    ParseTree[] children = new ParseTree[numParams + 1];
+                    children[0] = new ParseTree(ParseNodeType.FUNCTION_NAME, tk);
+                    for(int i = 1; i <= numParams; i++) children[i] = parseExpr(tokens);
+                    yield new ParseTree(ParseNodeType.FN_CALL, children);
+                }
+                default -> throw new IllegalStateException("Unexpected value: " + tk.type());
+            };
+        }
+    }
+    private final Parser parser = new Parser();
+
+    private double interpretExpr() {
+        return 0.0;
     }
 
     public Double input(String input) {
@@ -276,11 +283,11 @@ public class Interpreter {
         System.out.println("Input:" + tokens);
 
         if (tokens.peek().type() == TokenType.K_FN) {
-            parseFunction(tokens);
+            parser.parseFunction(tokens);
             return 0.;
         }
 
-        ParseTree expr = parseExpr(tokens);
+        ParseTree expr = parser.parseExpr(tokens);
 
         System.out.println("Parsed: " + expr);
         System.out.println("Remaining tokens: " + tokens);
